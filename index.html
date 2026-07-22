@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#0b1430" />
     <title>Upward — CSS HD-2D Rocket</title>
-    <link rel="stylesheet" href="styles.css?v=23" />
-    <script src="script.js?v=25" defer></script>
+    <link rel="stylesheet" href="styles.css?v=24" />
+    <script src="script.js?v=26" defer></script>
   </head>
   <body>
     <main class="scene" aria-label="A pixel-art rocket flying continuously upward">
@@ -23,6 +23,7 @@
       <div class="planet-field planet-field--far" data-planets="1" aria-hidden="true"></div>
       <div class="planet-field planet-field--near" data-planets="1" aria-hidden="true"></div>
       <div class="black-hole-field" data-black-holes="1" aria-hidden="true"></div>
+      <div class="planet-flyby-field" aria-hidden="true"></div>
       <div class="pulsar-field" aria-hidden="true"></div>
       <div class="comet-field comet-field--far motion-field motion-field--far" aria-hidden="true"></div>
       <div class="meteor-field meteor-field--far motion-field motion-field--far" aria-hidden="true"></div>
@@ -31,6 +32,8 @@
       <div class="comet-field comet-field--near motion-field motion-field--near" aria-hidden="true"></div>
       <div class="meteor-field meteor-field--near motion-field motion-field--near" aria-hidden="true"></div>
       <div class="cosmic-dust-field" aria-hidden="true"></div>
+
+      <div class="exhaust-nebula-glow" aria-hidden="true"></div>
 
       <div class="rocket-wrap" aria-hidden="true">
         <div class="rocket-shadow"></div>
@@ -60,6 +63,12 @@
 
       <div class="vignette" aria-hidden="true"></div>
       <div class="warp-overlay" aria-hidden="true"></div>
+
+      <aside class="event-hud" aria-live="polite" aria-atomic="true">
+        <span class="event-hud__code"></span>
+        <strong class="event-hud__title"></strong>
+        <span class="event-hud__detail"></span>
+      </aside>
 
       <header class="title-card">
         <p class="eyebrow">Flight log // 001</p>
