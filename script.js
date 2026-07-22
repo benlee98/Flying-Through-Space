@@ -134,10 +134,40 @@ const smoothstep = (minimum, maximum, value) => {
   return amount * amount * (3 - 2 * amount);
 };
 
+function blendVerticalTextureSeam(image, width, height) {
+  const blendDepth = Math.min(48, Math.max(18, Math.floor(height * 0.1)));
+
+  for (let offset = 0; offset < blendDepth; offset += 1) {
+    const edgeWeight = (Math.cos(Math.PI * offset / blendDepth) + 1) * 0.5;
+    const topY = offset;
+    const bottomY = height - 1 - offset;
+
+    for (let pixelX = 0; pixelX < width; pixelX += 1) {
+      const topIndex = (topY * width + pixelX) * 4;
+      const bottomIndex = (bottomY * width + pixelX) * 4;
+
+      for (let channelIndex = 0; channelIndex < 4; channelIndex += 1) {
+        const topValue = image.data[topIndex + channelIndex];
+        const bottomValue = image.data[bottomIndex + channelIndex];
+        const sharedEdgeValue = (topValue + bottomValue) * 0.5;
+
+        image.data[topIndex + channelIndex] = topValue * (1 - edgeWeight) + sharedEdgeValue * edgeWeight;
+        image.data[bottomIndex + channelIndex] = bottomValue * (1 - edgeWeight) + sharedEdgeValue * edgeWeight;
+      }
+    }
+  }
+}
+
 function renderProceduralNebula() {
   const canvas = document.createElement("canvas");
   const width = compactDevice ? 280 : 420;
-  const height = Math.round(Math.max(compactDevice ? 220 : 260, Math.min(compactDevice ? 420 : 560, width * window.innerHeight / window.innerWidth)));
+  const height = Math.round(Math.max(
+    compactDevice ? 440 : 520,
+    Math.min(
+      compactDevice ? 720 : 960,
+      width * window.innerHeight * 2 / window.innerWidth,
+    ),
+  ));
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext("2d");
@@ -200,6 +230,7 @@ function renderProceduralNebula() {
     }
   }
 
+  blendVerticalTextureSeam(image, width, height);
   context.putImageData(image, 0, 0);
   return `url("${canvas.toDataURL("image/png")}")`;
 }
@@ -348,7 +379,9 @@ function populateWarpStreaks(field, count) {
   for (let index = 0; index < count; index += 1) {
     const streak = document.createElement("span");
     streak.className = "warp-streak";
-    streak.style.setProperty("--warp-angle", `${randomBetween(0, 360)}deg`);
+    streak.style.setProperty("--warp-x", `${randomBetween(1, 99)}vw`);
+    streak.style.setProperty("--warp-tilt", `${randomBetween(-4, 4)}deg`);
+    streak.style.setProperty("--warp-drift", `${randomBetween(-3, 3)}vw`);
     streak.style.setProperty("--warp-length", `${randomBetween(34, 120)}px`);
     streak.style.setProperty("--warp-size", `${randomBetween(0.6, 2.2)}px`);
     streak.style.setProperty("--warp-delay", `${-randomBetween(0, 0.9)}s`);
@@ -498,7 +531,7 @@ function createAsteroidBelt(system, depthValue, radius, stellarType) {
   belt.className = "asteroid-belt";
   belt.style.setProperty("--belt-width", `${beltWidth}px`);
   belt.style.setProperty("--belt-height", `${beltHeight}px`);
-  belt.style.setProperty("--belt-tilt", `${randomBetween(-18, 18)}deg`);
+  belt.style.setProperty("--belt-tilt", `${randomBetween(0, 180)}deg`);
 
   for (let index = 0; index < asteroidCount; index += 1) {
     const asteroid = document.createElement("i");
@@ -521,14 +554,17 @@ function createAsteroidBelt(system, depthValue, radius, stellarType) {
   system.append(belt);
 }
 
-function randomizePlanet(system, depth, initial = false) {
+function randomizePlanet(system, depth, initial = false, initialPhase = Math.random(), depthIndex = 0) {
   const isFar = depth === "far";
   const depthValue = initial
-    ? (isFar ? randomBetween(0.06, 0.34) : randomBetween(0.54, 0.96))
+    ? depth === "far"
+      ? depthIndex === 0 ? randomBetween(0.12, 0.3) : randomBetween(0.025, 0.12)
+      : depth === "middle"
+        ? randomBetween(0.32, 0.6)
+        : randomBetween(0.64, 0.96)
     : Number(system.dataset.depth);
   const baseSize = 14 + depthValue * 92;
-  const visibleTransitTime = 160 - depthValue * 80;
-  const fullCycleTime = visibleTransitTime / 0.35;
+  const fullCycleTime = compactDevice ? 230 : 260;
   const stellarType = chooseStellarType();
   const orbitScale = 62 + depthValue * 92;
   const planetCount = [1, 2, 2, 3, 3, 4][Math.floor(Math.random() * 6)];
@@ -546,6 +582,8 @@ function randomizePlanet(system, depth, initial = false) {
   const sunX = -primaryPoint.x;
   const sunY = -primaryPoint.y;
   const sunSize = baseSize * (0.9 + stellarType.radius * 0.35);
+  const outerOrbitRadius = orbitScale * Math.sqrt(orbitDistances.at(-1));
+  const visualRadius = outerOrbitRadius * 2 + sunSize * 0.7 + baseSize;
 
   system.querySelectorAll(
     ".planet__companion, .asteroid-belt, .planet__moon, .planet__eclipse, .planet__sun--secondary",
@@ -557,6 +595,7 @@ function randomizePlanet(system, depth, initial = false) {
   system.style.setProperty("--sun-hue", stellarType.hue);
   system.style.setProperty("--sun-saturation", `${stellarType.saturation}%`);
   system.style.setProperty("--sun-lightness", `${Math.max(72, stellarType.lightness)}%`);
+  system.style.setProperty("--planet-clearance", `${visualRadius + 72}px`);
   system.querySelector(":scope > .planet__sun").classList.toggle("sun--flaring", Math.random() < 0.28);
   stylePlanetBody(
     system,
@@ -568,7 +607,7 @@ function randomizePlanet(system, depth, initial = false) {
   );
   appendMoons(system, Number.parseFloat(system.style.getPropertyValue("--planet-size")), stellarType);
 
-  if (Math.random() < 0.24) {
+  if (Math.random() < 0.08) {
     const companionStar = document.createElement("span");
     const binaryAngle = randomBetween(0, Math.PI * 2);
     const binarySeparation = sunSize * randomBetween(0.62, 0.92);
@@ -620,33 +659,59 @@ function randomizePlanet(system, depth, initial = false) {
   if (initial) {
     system.dataset.depth = depthValue;
     system.style.setProperty("--planet-speed", `${fullCycleTime}s`);
-    system.style.setProperty("--planet-delay", `${-randomBetween(0, fullCycleTime)}s`);
+    system.style.setProperty("--planet-delay", `${-initialPhase * fullCycleTime}s`);
   }
 }
 
+const planetSystemSlots = [];
+
 document.querySelectorAll(".planet-field").forEach((field) => {
-  const depth = field.classList.contains("planet-field--far") ? "far" : "near";
-  const count = Number(field.dataset.planets);
+  const depth = field.classList.contains("planet-field--far")
+    ? "far"
+    : field.classList.contains("planet-field--middle")
+      ? "middle"
+      : "near";
+  const configuredCount = Number(field.dataset.planets);
+  const count = compactDevice && depth === "far" ? 1 : configuredCount;
 
   for (let index = 0; index < count; index += 1) {
-    const planet = document.createElement("span");
-    planet.className = "planet";
-
-    const sun = document.createElement("span");
-    sun.className = "planet__sun";
-    planet.append(sun);
-    appendPlanetParts(planet);
-
-    randomizePlanet(planet, depth, true);
-    planet.addEventListener("animationiteration", (event) => {
-      if (event.target === planet && event.animationName === "planet-fall") {
-        randomizePlanet(planet, depth);
-      }
-    });
-    field.append(planet);
+    planetSystemSlots.push({ field, depth, depthIndex: index });
   }
 });
 
+function rollPlanetPresence(planet, depth, depthIndex) {
+  const appearanceChance = depth === "far"
+    ? depthIndex === 0 ? 0.76 : 0.28
+    : depth === "middle" ? 0.3 : 0.08;
+
+  planet.classList.toggle("planet--absent", Math.random() >= appearanceChance);
+}
+
+const planetScenePhase = Math.random();
+
+planetSystemSlots.forEach(({ field, depth, depthIndex }) => {
+  const planet = document.createElement("span");
+  planet.className = "planet";
+
+  const sun = document.createElement("span");
+  sun.className = "planet__sun";
+  planet.append(sun);
+  appendPlanetParts(planet);
+
+  const phaseOffset = depth === "middle" ? 0.5 : depth === "far" ? 0.02 + depthIndex * 0.1 : 0;
+  const initialPhase = (planetScenePhase + phaseOffset) % 1;
+  randomizePlanet(planet, depth, true, initialPhase, depthIndex);
+  rollPlanetPresence(planet, depth, depthIndex);
+  planet.addEventListener("animationiteration", (event) => {
+    if (event.target === planet && event.animationName === "planet-fall") {
+      randomizePlanet(planet, depth);
+      rollPlanetPresence(planet, depth, depthIndex);
+    }
+  });
+  field.append(planet);
+});
+
+const scene = document.querySelector(".scene");
 const rocket = document.querySelector(".rocket");
 const hiddenStellarLights = Array.from({ length: 2 }, () => {
   const stellarType = chooseStellarType();
@@ -676,7 +741,7 @@ function updateRocketLighting(timestamp) {
     let dominantInfluence = 0;
     let dominantHue = 48;
 
-    document.querySelectorAll(".planet__sun").forEach((sun) => {
+    document.querySelectorAll(".planet:not(.planet--absent) .planet__sun").forEach((sun) => {
       const rect = sun.getBoundingClientRect();
       const sunX = rect.left + rect.width * 0.5;
       const sunY = rect.top + rect.height * 0.5;
@@ -685,8 +750,11 @@ function updateRocketLighting(timestamp) {
       const distance = Math.max(1, Math.hypot(deltaX, deltaY));
       const proximity = Math.max(0, 1 - distance / influenceRadius);
       const angularSize = Math.min(1.35, rect.width / 64);
-      const systemOpacity = Number.parseFloat(getComputedStyle(sun.closest(".planet")).opacity);
-      const influence = proximity * proximity * angularSize * systemOpacity;
+      const system = sun.closest(".planet");
+      const field = sun.closest(".planet-field");
+      const systemOpacity = Number.parseFloat(getComputedStyle(system).opacity);
+      const fieldOpacity = field ? Number.parseFloat(getComputedStyle(field).opacity) : 1;
+      const influence = proximity * proximity * angularSize * systemOpacity * fieldOpacity;
 
       if (influence <= 0.002) return;
 
@@ -780,7 +848,6 @@ function updateRocketLighting(timestamp) {
 
 window.requestAnimationFrame(updateRocketLighting);
 
-const scene = document.querySelector(".scene");
 scene.style.setProperty("--nebula-light-color", nebulaPalette[1].join(" "));
 scene.style.setProperty("--nebula-accent-color", nebulaPalette[3].join(" "));
 const eventHud = document.querySelector(".event-hud");
@@ -855,7 +922,7 @@ document.querySelectorAll(".black-hole-field").forEach((field) => {
     blackHole.style.setProperty("--black-hole-x", `${randomBetween(8, 92)}vw`);
     blackHole.style.setProperty("--black-hole-size", `${size}px`);
     blackHole.style.setProperty("--black-hole-tilt", `${randomBetween(-28, 28)}deg`);
-    blackHole.style.setProperty("--black-hole-hue", `${randomBetween(20, 52)}`);
+    blackHole.style.setProperty("--black-hole-hue", `${randomBetween(348, 372)}`);
     blackHole.style.setProperty("--black-hole-speed", `${fullCycleTime}s`);
     blackHole.style.setProperty("--black-hole-delay", `${-randomBetween(0, fullCycleTime)}s`);
     field.append(blackHole);
@@ -875,17 +942,57 @@ function launchPlanetFlyby() {
     : type === "gas"
       ? randomBetween(22, 58)
       : randomBetween(12, 42);
+  const hasAtmosphere = type !== "rocky" || Math.random() < 0.46;
 
-  flyby.className = `planet-flyby planet-flyby--${type}`;
+  flyby.className = `planet-flyby planet-flyby--${type}${hasAtmosphere ? " planet-flyby--atmosphere" : ""}`;
   flyby.style.setProperty("--flyby-x", `${randomBetween(8, 92)}vw`);
   flyby.style.setProperty("--flyby-drift", `${randomBetween(-24, 24)}vw`);
   flyby.style.setProperty("--flyby-size", `${size}px`);
   flyby.style.setProperty("--flyby-hue", `${hue}`);
   flyby.style.setProperty("--flyby-light-x", `${randomBetween(18, 42)}%`);
   flyby.style.setProperty("--flyby-light-y", `${randomBetween(18, 38)}%`);
+  flyby.style.setProperty("--flyby-feature-x1", `${randomBetween(22, 42)}%`);
+  flyby.style.setProperty("--flyby-feature-y1", `${randomBetween(28, 68)}%`);
+  flyby.style.setProperty("--flyby-feature-x2", `${randomBetween(54, 78)}%`);
+  flyby.style.setProperty("--flyby-feature-y2", `${randomBetween(24, 72)}%`);
+  flyby.style.setProperty("--flyby-feature-x3", `${randomBetween(30, 72)}%`);
+  flyby.style.setProperty("--flyby-feature-y3", `${randomBetween(56, 82)}%`);
+  flyby.style.setProperty("--flyby-atmosphere-hue", `${type === "ocean" ? randomBetween(188, 210) : type === "gas" ? hue + 8 : randomBetween(18, 205)}`);
+  flyby.style.setProperty("--flyby-weather-speed", `${randomBetween(28, 52)}s`);
   flyby.style.setProperty("--flyby-tilt", `${randomBetween(-12, 12)}deg`);
   flyby.style.setProperty("--flyby-speed", `${randomBetween(34, 58)}s`);
-  flyby.innerHTML = '<span class="planet-flyby__surface"><i class="planet-flyby__weather"></i></span>';
+  const surface = document.createElement("span");
+  const terrain = document.createElement("i");
+  const weather = document.createElement("i");
+  const terrainCount = compactDevice ? (type === "gas" ? 4 : 6) : (type === "gas" ? 6 : 10);
+
+  surface.className = "planet-flyby__surface";
+  terrain.className = "planet-flyby__terrain";
+  weather.className = "planet-flyby__weather";
+
+  for (let index = 0; index < terrainCount; index += 1) {
+    const detail = document.createElement("b");
+    const points = Array.from({ length: 12 }, (_, pointIndex) => {
+      const angle = (pointIndex / 12) * Math.PI * 2;
+      const radius = randomBetween(0.58, 1);
+      const x = 50 + Math.cos(angle) * radius * 49;
+      const y = 50 + Math.sin(angle) * radius * 47;
+      return `${x.toFixed(1)}% ${y.toFixed(1)}%`;
+    });
+
+    detail.className = "planet-flyby__terrain-detail";
+    detail.style.setProperty("--terrain-x", `${randomBetween(8, 92)}%`);
+    detail.style.setProperty("--terrain-y", `${randomBetween(8, 92)}%`);
+    detail.style.setProperty("--terrain-width", `${randomBetween(type === "gas" ? 24 : 12, type === "gas" ? 52 : 38)}%`);
+    detail.style.setProperty("--terrain-height", `${randomBetween(10, 34)}%`);
+    detail.style.setProperty("--terrain-rotation", `${randomBetween(-38, 38)}deg`);
+    detail.style.setProperty("--terrain-hue", `${type === "ocean" ? randomBetween(72, 122) : type === "gas" ? hue + randomBetween(-18, 18) : hue + randomBetween(-12, 14)}`);
+    detail.style.setProperty("--terrain-shape", `polygon(${points.join(", ")})`);
+    terrain.append(detail);
+  }
+
+  surface.append(terrain, weather);
+  flyby.append(surface);
   flyby.addEventListener("animationend", () => flyby.remove(), { once: true });
   field.append(flyby);
   showHudEvent("PROXIMITY // LARGE BODY", "Planetary flyby", "Parallax compensation active");

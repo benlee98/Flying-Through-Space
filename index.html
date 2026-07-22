@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#0b1430" />
     <title>Upward — CSS HD-2D Rocket</title>
-    <link rel="stylesheet" href="styles.css?v=24" />
-    <script src="script.js?v=26" defer></script>
+    <link rel="stylesheet" href="styles.css?v=33" />
+    <script src="script.js?v=38" defer></script>
   </head>
   <body>
     <main class="scene" aria-label="A pixel-art rocket flying continuously upward">
@@ -20,7 +20,8 @@
       <div class="stars stars--near" aria-hidden="true"></div>
       <div class="stars stars--bright" aria-hidden="true"></div>
 
-      <div class="planet-field planet-field--far" data-planets="1" aria-hidden="true"></div>
+      <div class="planet-field planet-field--far" data-planets="2" aria-hidden="true"></div>
+      <div class="planet-field planet-field--middle" data-planets="1" aria-hidden="true"></div>
       <div class="planet-field planet-field--near" data-planets="1" aria-hidden="true"></div>
       <div class="black-hole-field" data-black-holes="1" aria-hidden="true"></div>
       <div class="planet-flyby-field" aria-hidden="true"></div>
@@ -70,7 +71,7 @@
         <span class="event-hud__detail"></span>
       </aside>
 
-      <header class="title-card">
+      <header class="title-card" hidden>
         <p class="eyebrow">Flight log // 001</p>
         <h1>UPWARD</h1>
         <p>Beyond the quiet blue</p>
