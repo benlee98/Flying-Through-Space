@@ -2,6 +2,7 @@ const randomBetween = (min, max) => Math.random() * (max - min) + min;
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const compactDevice = window.matchMedia("(max-width: 700px), (pointer: coarse)").matches;
 const performanceScale = compactDevice ? 0.62 : 1;
+let lightingInfluenceRadius = Math.hypot(window.innerWidth, window.innerHeight) * 0.72;
 const motionPlanes = [
   { name: "far", scale: 0.48, speed: 0.46, weight: 0.34 },
   { name: "middle", scale: 0.82, speed: 0.76, weight: 0.44 },
@@ -106,7 +107,8 @@ function sampleFractalNoise(stack, x, y) {
   let amplitudeTotal = 0;
   let total = 0;
 
-  stack.forEach(({ frequency, values }) => {
+  for (let octaveIndex = 0; octaveIndex < stack.length; octaveIndex += 1) {
+    const { frequency, values } = stack[octaveIndex];
     const wrappedX = ((x % 1) + 1) % 1 * frequency;
     const wrappedY = ((y % 1) + 1) % 1 * frequency;
     const x0 = Math.floor(wrappedX) % frequency;
@@ -123,7 +125,7 @@ function sampleFractalNoise(stack, x, y) {
     total += (top * (1 - ty) + bottom * ty) * amplitude;
     amplitudeTotal += amplitude;
     amplitude *= 0.52;
-  });
+  }
 
   return total / amplitudeTotal;
 }
@@ -201,14 +203,15 @@ function renderProceduralNebula() {
       const chemistry = sampleFractalNoise(chemistryNoise, warpedU + 0.37, warpedV - 0.24);
       let density = smoothstep(0.45, 0.76, base * 0.55 + filaments * 0.31 + fineFilaments * 0.14);
 
-      cavities.forEach((cavity) => {
+      for (let cavityIndex = 0; cavityIndex < cavities.length; cavityIndex += 1) {
+        const cavity = cavities[cavityIndex];
         const deltaX = Math.min(Math.abs(u - cavity.x), 1 - Math.abs(u - cavity.x));
         const deltaY = Math.min(Math.abs(v - cavity.y), 1 - Math.abs(v - cavity.y));
         const distance = Math.hypot(deltaX, deltaY);
         const hollow = Math.exp(-(distance ** 2) / (cavity.radius ** 2));
         const rim = Math.exp(-((distance - cavity.radius) ** 2) / 0.0007);
         density = Math.max(0, density - hollow * 0.5) + rim * 0.12;
-      });
+      }
 
       const transmission = Math.exp(-dust * 2.5);
       const emission = clamp01(
@@ -232,19 +235,40 @@ function renderProceduralNebula() {
 
   blendVerticalTextureSeam(image, width, height);
   context.putImageData(image, 0, 0);
-  return `url("${canvas.toDataURL("image/png")}")`;
+  return canvas;
 }
 
 const nebulaDepthFields = document.querySelectorAll(".nebula-field, .nebula-depth-field");
+let nebulaTextureUrl = "";
+let nebulaTextureReady = false;
+let nebulaTextureGeneration = 0;
+let nebulaTextureViewport = { width: window.innerWidth, height: window.innerHeight };
 
 function updateNebulaTexture() {
-  const texture = renderProceduralNebula();
-  nebulaDepthFields.forEach((field) => {
-    field.style.backgroundImage = texture;
-  });
+  const generation = ++nebulaTextureGeneration;
+  const canvas = renderProceduralNebula();
+  nebulaTextureViewport = { width: window.innerWidth, height: window.innerHeight };
+
+  canvas.toBlob((blob) => {
+    if (!blob || generation !== nebulaTextureGeneration) return;
+    const nextTextureUrl = URL.createObjectURL(blob);
+    nebulaDepthFields.forEach((field) => {
+      field.style.backgroundImage = `url("${nextTextureUrl}")`;
+    });
+    if (nebulaTextureUrl) URL.revokeObjectURL(nebulaTextureUrl);
+    nebulaTextureUrl = nextTextureUrl;
+    nebulaTextureReady = true;
+  }, "image/png");
 }
 
-updateNebulaTexture();
+const initialNebulaVisible = Math.random() < 0.33;
+if (initialNebulaVisible) {
+  updateNebulaTexture();
+} else if ("requestIdleCallback" in window) {
+  window.requestIdleCallback(updateNebulaTexture, { timeout: 15000 });
+} else {
+  window.setTimeout(updateNebulaTexture, 2500);
+}
 
 function populateNebulaLights(field, count) {
   const fragment = document.createDocumentFragment();
@@ -274,8 +298,25 @@ populateNebulaLights(document.querySelector(".nebula-knot-field"), 5);
 
 let nebulaResizeTimer;
 window.addEventListener("resize", () => {
+  lightingInfluenceRadius = Math.hypot(window.innerWidth, window.innerHeight) * 0.72;
   window.clearTimeout(nebulaResizeTimer);
-  nebulaResizeTimer = window.setTimeout(updateNebulaTexture, 240);
+  nebulaResizeTimer = window.setTimeout(() => {
+    if (!nebulaTextureReady) return;
+    if (
+      window.innerWidth === nebulaTextureViewport.width &&
+      window.innerHeight === nebulaTextureViewport.height
+    ) return;
+
+    if ("requestIdleCallback" in window) {
+      window.requestIdleCallback(updateNebulaTexture, { timeout: 2000 });
+    } else {
+      updateNebulaTexture();
+    }
+  }, 240);
+});
+
+window.addEventListener("pagehide", (event) => {
+  if (!event.persisted && nebulaTextureUrl) URL.revokeObjectURL(nebulaTextureUrl);
 });
 
 function populateGalaxies(field, count) {
@@ -442,7 +483,7 @@ function stylePlanetBody(body, size, orbitalDistance, stellarType, starX, starY)
   body.style.setProperty("--planet-hue", `${Math.round(hue)}`);
   body.style.setProperty("--planet-tilt", `${randomBetween(-14, 14)}deg`);
   body.style.setProperty("--surface-rotation", `${randomBetween(-18, 18)}deg`);
-  body.style.setProperty("--ring-tilt", `${randomBetween(-18, -7)}deg`);
+  body.style.setProperty("--ring-tilt", `${randomBetween(0, 180)}deg`);
   body.style.setProperty("--feature-x1", `${randomBetween(25, 72)}%`);
   body.style.setProperty("--feature-y1", `${randomBetween(24, 72)}%`);
   body.style.setProperty("--feature-x2", `${randomBetween(22, 76)}%`);
@@ -492,11 +533,14 @@ function appendMoons(body, planetSize, stellarType) {
 
   const moonCount = Math.random() < 0.2 ? 2 : 1;
   for (let index = 0; index < moonCount; index += 1) {
+    const orbit = document.createElement("span");
     const moon = document.createElement("span");
     const distance = planetSize * randomBetween(0.78 + index * 0.32, 1.12 + index * 0.42);
     const verticalDistance = distance * randomBetween(0.38, 0.52);
     const moonSize = planetSize * randomBetween(0.08, 0.18);
 
+    orbit.className = "planet__moon-orbit";
+    orbit.style.setProperty("--moon-orbit-tilt", `${randomBetween(0, 180)}deg`);
     moon.className = "planet__moon";
     moon.style.setProperty("--moon-x", `${distance}px`);
     moon.style.setProperty("--moon-y", `${verticalDistance}px`);
@@ -508,7 +552,10 @@ function appendMoons(body, planetSize, stellarType) {
     const moonSpeed = randomBetween(58, 110);
     moon.style.setProperty("--moon-speed", `${moonSpeed}s`);
     moon.style.setProperty("--moon-delay", `${-randomBetween(0, moonSpeed)}s`);
-    body.append(moon);
+    orbit.style.setProperty("--moon-speed", moon.style.getPropertyValue("--moon-speed"));
+    orbit.style.setProperty("--moon-delay", moon.style.getPropertyValue("--moon-delay"));
+    orbit.append(moon);
+    body.append(orbit);
   }
 
   if (Math.random() < 0.42) {
@@ -523,15 +570,20 @@ function appendMoons(body, planetSize, stellarType) {
 }
 
 function createAsteroidBelt(system, depthValue, radius, stellarType) {
-  const belt = document.createElement("span");
+  const beltBack = document.createElement("span");
+  const beltFront = document.createElement("span");
   const beltWidth = radius * 2;
   const beltHeight = radius * randomBetween(0.34, 0.5);
   const asteroidCount = Math.round((24 + depthValue * 24) * performanceScale);
+  const beltTilt = randomBetween(0, 180);
 
-  belt.className = "asteroid-belt";
-  belt.style.setProperty("--belt-width", `${beltWidth}px`);
-  belt.style.setProperty("--belt-height", `${beltHeight}px`);
-  belt.style.setProperty("--belt-tilt", `${randomBetween(0, 180)}deg`);
+  beltBack.className = "asteroid-belt asteroid-belt--back";
+  beltFront.className = "asteroid-belt asteroid-belt--front";
+  [beltBack, beltFront].forEach((belt) => {
+    belt.style.setProperty("--belt-width", `${beltWidth}px`);
+    belt.style.setProperty("--belt-height", `${beltHeight}px`);
+    belt.style.setProperty("--belt-tilt", `${beltTilt}deg`);
+  });
 
   for (let index = 0; index < asteroidCount; index += 1) {
     const asteroid = document.createElement("i");
@@ -548,10 +600,10 @@ function createAsteroidBelt(system, depthValue, radius, stellarType) {
     asteroid.style.setProperty("--asteroid-opacity", `${randomBetween(0.58, 0.96)}`);
     asteroid.style.setProperty("--asteroid-hue", `${stellarType.hue + randomBetween(-20, 20)}`);
     asteroid.style.setProperty("--asteroid-lightness", `${randomBetween(42, 68)}%`);
-    belt.append(asteroid);
+    (Math.sin(angle) < 0 ? beltBack : beltFront).append(asteroid);
   }
 
-  system.append(belt);
+  system.append(beltBack, beltFront);
 }
 
 function randomizePlanet(system, depth, initial = false, initialPhase = Math.random(), depthIndex = 0) {
@@ -586,7 +638,7 @@ function randomizePlanet(system, depth, initial = false, initialPhase = Math.ran
   const visualRadius = outerOrbitRadius * 2 + sunSize * 0.7 + baseSize;
 
   system.querySelectorAll(
-    ".planet__companion, .asteroid-belt, .planet__moon, .planet__eclipse, .planet__sun--secondary",
+    ".planet__companion, .asteroid-belt, .planet__moon-orbit, .planet__eclipse, .planet__sun--secondary",
   ).forEach((item) => item.remove());
   system.style.setProperty("--planet-x", `${randomBetween(10, 90)}vw`);
   system.style.setProperty("--sun-x", `${sunX}px`);
@@ -656,6 +708,8 @@ function randomizePlanet(system, depth, initial = false, initialPhase = Math.ran
     createAsteroidBelt(system, depthValue, orbitScale * Math.sqrt(beltDistance), stellarType);
   }
 
+  system.stellarSources = Array.from(system.querySelectorAll(":scope > .planet__sun"));
+
   if (initial) {
     system.dataset.depth = depthValue;
     system.style.setProperty("--planet-speed", `${fullCycleTime}s`);
@@ -688,6 +742,7 @@ function rollPlanetPresence(planet, depth, depthIndex) {
 }
 
 const planetScenePhase = Math.random();
+const planetSystems = [];
 
 planetSystemSlots.forEach(({ field, depth, depthIndex }) => {
   const planet = document.createElement("span");
@@ -709,7 +764,18 @@ planetSystemSlots.forEach(({ field, depth, depthIndex }) => {
     }
   });
   field.append(planet);
+  planetSystems.push(planet);
 });
+
+const detailAnimationObserver = "IntersectionObserver" in window
+  ? new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        entry.target.classList.toggle("celestial--offscreen", !entry.isIntersecting);
+      });
+    }, { rootMargin: "15%" })
+  : null;
+
+planetSystems.forEach((planet) => detailAnimationObserver?.observe(planet));
 
 const scene = document.querySelector(".scene");
 const rocket = document.querySelector(".rocket");
@@ -727,50 +793,57 @@ const hiddenStellarLights = Array.from({ length: 2 }, () => {
 let lastLightingFrame = 0;
 let pulsarHudActive = false;
 let blackHoleHudActive = false;
+const blackHoles = [];
 
 function updateRocketLighting(timestamp) {
+  if (document.hidden) {
+    lastLightingFrame = timestamp;
+    window.requestAnimationFrame(updateRocketLighting);
+    return;
+  }
+
   if (timestamp - lastLightingFrame > (compactDevice ? 66 : 33)) {
     lastLightingFrame = timestamp;
     const rocketRect = rocket.getBoundingClientRect();
     const rocketX = rocketRect.left + rocketRect.width * 0.5;
     const rocketY = rocketRect.top + rocketRect.height * 0.42;
-    const influenceRadius = Math.hypot(window.innerWidth, window.innerHeight) * 0.72;
+    const influenceRadius = lightingInfluenceRadius;
     let vectorX = 0;
     let vectorY = 0;
     let totalInfluence = 0;
     let dominantInfluence = 0;
     let dominantHue = 48;
 
-    document.querySelectorAll(".planet:not(.planet--absent) .planet__sun").forEach((sun) => {
-      const rect = sun.getBoundingClientRect();
-      const sunX = rect.left + rect.width * 0.5;
-      const sunY = rect.top + rect.height * 0.5;
-      const deltaX = sunX - rocketX;
-      const deltaY = sunY - rocketY;
-      const distance = Math.max(1, Math.hypot(deltaX, deltaY));
-      const proximity = Math.max(0, 1 - distance / influenceRadius);
-      const angularSize = Math.min(1.35, rect.width / 64);
-      const system = sun.closest(".planet");
-      const field = sun.closest(".planet-field");
-      const systemOpacity = Number.parseFloat(getComputedStyle(system).opacity);
-      const fieldOpacity = field ? Number.parseFloat(getComputedStyle(field).opacity) : 1;
-      const influence = proximity * proximity * angularSize * systemOpacity * fieldOpacity;
+    for (const system of planetSystems) {
+      if (system.classList.contains("planet--absent")) continue;
 
-      if (influence <= 0.002) return;
+      for (const sun of system.stellarSources) {
+        const rect = sun.getBoundingClientRect();
+        const sunX = rect.left + rect.width * 0.5;
+        const sunY = rect.top + rect.height * 0.5;
+        const deltaX = sunX - rocketX;
+        const deltaY = sunY - rocketY;
+        const distance = Math.max(1, Math.hypot(deltaX, deltaY));
+        const proximity = Math.max(0, 1 - distance / influenceRadius);
+        const angularSize = Math.min(1.35, rect.width / 64);
+        const influence = proximity * proximity * angularSize;
 
-      vectorX += (deltaX / distance) * influence;
-      vectorY += (deltaY / distance) * influence;
-      totalInfluence += influence;
+        if (influence <= 0.002) continue;
 
-      if (influence > dominantInfluence) {
-        const styles = getComputedStyle(sun);
-        const hueProperty = sun.classList.contains("planet__sun--secondary")
-          ? "--sun2-hue"
-          : "--sun-hue";
-        dominantInfluence = influence;
-        dominantHue = Number.parseFloat(styles.getPropertyValue(hueProperty)) || 48;
+        vectorX += (deltaX / distance) * influence;
+        vectorY += (deltaY / distance) * influence;
+        totalInfluence += influence;
+
+        if (influence > dominantInfluence) {
+          const hueProperty = sun.classList.contains("planet__sun--secondary")
+            ? "--sun2-hue"
+            : "--sun-hue";
+          const hueSource = sun.classList.contains("planet__sun--secondary") ? sun : system;
+          dominantInfluence = influence;
+          dominantHue = Number.parseFloat(hueSource.style.getPropertyValue(hueProperty)) || 48;
+        }
       }
-    });
+    }
 
     const vectorLength = Math.max(0.001, Math.hypot(vectorX, vectorY));
     const rimX = 50 + (vectorX / vectorLength) * 54;
@@ -802,27 +875,53 @@ function updateRocketLighting(timestamp) {
     const lightX = 50 + (frontVectorX / frontVectorLength) * 44;
     const lightY = 50 + (frontVectorY / frontVectorLength) * 44;
     const intensity = Math.min(0.34, frontInfluence);
-    const pulsarRect = pulsar.getBoundingClientRect();
-    const pulsarX = pulsarRect.left + pulsarRect.width * 0.5;
-    const pulsarY = pulsarRect.top + pulsarRect.height * 0.5;
-    const pulsarDirection = Math.atan2(rocketY - pulsarY, rocketX - pulsarX);
-    const beamAngle = ((timestamp % 48000) / 48000) * Math.PI * 2;
-    const beamAlignment = Math.abs(Math.cos(pulsarDirection - beamAngle)) ** 8;
-    const pulsarOpacity = Number.parseFloat(getComputedStyle(pulsar).opacity);
-    const pulsarDistance = Math.hypot(rocketX - pulsarX, rocketY - pulsarY);
-    const pulsarProximity = Math.max(0, 1 - pulsarDistance / (influenceRadius * 1.25));
-    const pulsarFlash = Math.min(0.32, beamAlignment * pulsarOpacity * (0.12 + pulsarProximity * 0.3));
+    const pulsarStyles = getComputedStyle(pulsar);
+    const pulsarOpacity = Number.parseFloat(pulsarStyles.opacity);
+    if (
+      pulsarOpacity > 0.01 &&
+      timestamp < sceneDirector.activeUntil &&
+      !pulsar.classList.contains("pulsar--debug-preview")
+    ) {
+      pulsar.classList.add("rare-body--suppressed");
+    } else if (pulsarOpacity < 0.01) {
+      pulsar.classList.remove("rare-body--suppressed");
+    }
+    const pulsarVisible = !pulsar.classList.contains("rare-body--suppressed");
+    let pulsarFlash = 0;
 
-    if (pulsarOpacity > 0.2 && !pulsarHudActive) {
+    if (pulsarVisible && pulsarOpacity > 0.01) {
+      const pulsarRect = pulsar.getBoundingClientRect();
+      const pulsarX = pulsarRect.left + pulsarRect.width * 0.5;
+      const pulsarY = pulsarRect.top + pulsarRect.height * 0.5;
+      const pulsarDirection = Math.atan2(rocketY - pulsarY, rocketX - pulsarX);
+      const beamAngle = ((timestamp % 48000) / 48000) * Math.PI * 2;
+      const beamAlignment = Math.abs(Math.cos(pulsarDirection - beamAngle)) ** 8;
+      const pulsarDistance = Math.hypot(rocketX - pulsarX, rocketY - pulsarY);
+      const pulsarProximity = Math.max(0, 1 - pulsarDistance / (influenceRadius * 1.25));
+      pulsarFlash = Math.min(0.32, beamAlignment * pulsarOpacity * (0.12 + pulsarProximity * 0.3));
+    }
+
+    if (pulsarVisible && pulsarOpacity > 0.2 && !pulsarHudActive) {
       pulsarHudActive = true;
       showHudEvent("SIGNAL // PERIODIC SOURCE", "Pulsar detected", "Beam timing synchronized");
     } else if (pulsarOpacity < 0.04) {
       pulsarHudActive = false;
     }
 
-    const blackHole = document.querySelector(".black-hole");
+    const blackHole = blackHoles[0];
+    const blackHoleOpacity = blackHole ? Number.parseFloat(getComputedStyle(blackHole).opacity) : 0;
+    if (
+      blackHole &&
+      blackHoleOpacity > 0.01 &&
+      timestamp < sceneDirector.activeUntil &&
+      !blackHole.classList.contains("black-hole--debug-preview")
+    ) {
+      blackHole.classList.add("rare-body--suppressed");
+    } else if (blackHole && blackHoleOpacity < 0.01) {
+      blackHole.classList.remove("rare-body--suppressed");
+    }
     const visibleBlackHole = blackHole
-      ? Number.parseFloat(getComputedStyle(blackHole).opacity) > 0.2
+      ? !blackHole.classList.contains("rare-body--suppressed") && blackHoleOpacity > 0.2
       : false;
     if (visibleBlackHole && !blackHoleHudActive) {
       blackHoleHudActive = true;
@@ -846,11 +945,12 @@ function updateRocketLighting(timestamp) {
   window.requestAnimationFrame(updateRocketLighting);
 }
 
-window.requestAnimationFrame(updateRocketLighting);
-
 scene.style.setProperty("--nebula-light-color", nebulaPalette[1].join(" "));
 scene.style.setProperty("--nebula-accent-color", nebulaPalette[3].join(" "));
 const eventHud = document.querySelector(".event-hud");
+const eventHudCode = eventHud.querySelector(".event-hud__code");
+const eventHudTitle = eventHud.querySelector(".event-hud__title");
+const eventHudDetail = eventHud.querySelector(".event-hud__detail");
 const eventQueue = [];
 let eventHudBusy = false;
 
@@ -866,9 +966,9 @@ function showHudEvent(code, title, detail) {
     }
 
     eventHudBusy = true;
-    eventHud.querySelector(".event-hud__code").textContent = event.code;
-    eventHud.querySelector(".event-hud__title").textContent = event.title;
-    eventHud.querySelector(".event-hud__detail").textContent = event.detail;
+    eventHudCode.textContent = event.code;
+    eventHudTitle.textContent = event.title;
+    eventHudDetail.textContent = event.detail;
     eventHud.classList.add("event-hud--visible");
 
     window.setTimeout(() => {
@@ -879,6 +979,33 @@ function showHudEvent(code, title, detail) {
 
   displayNextEvent();
 }
+
+const sceneDirector = {
+  activeEvent: "",
+  activeUntil: 0,
+  quietUntil: performance.now() + randomBetween(28000, 52000),
+  reserve(eventName, duration, force = false) {
+    const now = performance.now();
+    const rareBodyVisible = Array.from(document.querySelectorAll(".black-hole, .pulsar")).some((body) => {
+      const styles = getComputedStyle(body);
+      return styles.visibility !== "hidden" && Number.parseFloat(styles.opacity) > 0.08;
+    });
+
+    if (!force && (now < this.activeUntil || now < this.quietUntil || rareBodyVisible)) return false;
+    this.activeEvent = eventName;
+    this.activeUntil = now + duration;
+    this.quietUntil = this.activeUntil + randomBetween(48000, 110000);
+    window.setTimeout(() => {
+      if (performance.now() >= this.activeUntil) this.activeEvent = "";
+    }, duration + 100);
+    return true;
+  },
+  allowsMinorEvent() {
+    if (performance.now() < this.activeUntil) return false;
+    const chance = scene.classList.contains("scene--region-void") ? 0.24 : 0.68;
+    return Math.random() < chance;
+  },
+};
 
 function scheduleNebulaEncounter(visible, initial = false) {
   scene.classList.toggle("scene--nebula-visible", visible);
@@ -894,17 +1021,64 @@ function scheduleNebulaEncounter(visible, initial = false) {
   window.setTimeout(() => scheduleNebulaEncounter(!visible), duration);
 }
 
-scheduleNebulaEncounter(Math.random() < 0.33, true);
+scheduleNebulaEncounter(initialNebulaVisible, true);
 
-function scheduleWarp(initial = false) {
-  const wait = initial ? randomBetween(70000, 120000) : randomBetween(140000, 250000);
-  window.setTimeout(() => {
-    if (!document.hidden && !reducedMotion.matches) {
-      scene.classList.add("scene--warp");
-      showHudEvent("DRIVE // TRANSIENT", "Warp corridor stable", "Velocity envelope expanded");
-      window.setTimeout(() => scene.classList.remove("scene--warp"), 6500);
+const environmentRegions = [
+  { name: "void", weight: 0.48, hue: [205, 225], duration: [125000, 240000] },
+  { name: "clear", weight: 0.34, hue: [188, 224], duration: [95000, 190000] },
+  { name: "dust", weight: 0.12, hue: [18, 42], duration: [70000, 135000] },
+  { name: "stellar", weight: 0.06, hue: [190, 275], duration: [55000, 105000] },
+];
+let currentEnvironmentRegion = "";
+
+function chooseEnvironmentRegion() {
+  let roll = Math.random();
+
+  for (const region of environmentRegions) {
+    roll -= region.weight;
+    if (roll <= 0 && (region.name !== currentEnvironmentRegion || Math.random() < 0.22)) {
+      return region;
     }
-    scheduleWarp();
+  }
+
+  return environmentRegions.find((region) => region.name !== currentEnvironmentRegion) || environmentRegions[0];
+}
+
+function applyEnvironmentRegion(region) {
+  environmentRegions.forEach(({ name }) => scene.classList.remove(`scene--region-${name}`));
+  scene.classList.add(`scene--region-${region.name}`);
+  scene.style.setProperty("--region-hue", `${randomBetween(...region.hue)}`);
+  scene.style.setProperty("--region-x", `${randomBetween(12, 88)}%`);
+  scene.style.setProperty("--region-y", `${randomBetween(16, 84)}%`);
+  currentEnvironmentRegion = region.name;
+}
+
+function scheduleEnvironmentRegion(initial = false) {
+  const region = chooseEnvironmentRegion();
+  applyEnvironmentRegion(region);
+
+  const duration = initial ? randomBetween(70000, 130000) : randomBetween(...region.duration);
+  window.setTimeout(() => scheduleEnvironmentRegion(), duration);
+}
+
+scheduleEnvironmentRegion(true);
+
+function launchWarp(force = false) {
+  if (document.hidden || reducedMotion.matches || !sceneDirector.reserve("warp", 6500, force)) return false;
+
+  scene.classList.add("scene--warp");
+  showHudEvent("DRIVE // TRANSIENT", "Warp corridor stable", "Velocity envelope expanded");
+  window.setTimeout(() => scene.classList.remove("scene--warp"), 6500);
+  return true;
+}
+
+function scheduleWarp(initial = false, retry = false) {
+  const wait = retry
+    ? randomBetween(25000, 48000)
+    : initial ? randomBetween(70000, 120000) : randomBetween(140000, 250000);
+  window.setTimeout(() => {
+    const launched = launchWarp();
+    scheduleWarp(false, !launched);
   }, wait);
 }
 
@@ -926,15 +1100,19 @@ document.querySelectorAll(".black-hole-field").forEach((field) => {
     blackHole.style.setProperty("--black-hole-speed", `${fullCycleTime}s`);
     blackHole.style.setProperty("--black-hole-delay", `${-randomBetween(0, fullCycleTime)}s`);
     field.append(blackHole);
+    blackHoles.push(blackHole);
+    detailAnimationObserver?.observe(blackHole);
   }
 });
 
-function launchPlanetFlyby() {
-  if (document.hidden || reducedMotion.matches) return;
+function launchPlanetFlyby(force = false) {
+  if (document.hidden || reducedMotion.matches) return false;
 
   const field = document.querySelector(".planet-flyby-field");
   const flyby = document.createElement("span");
   const size = Math.min(window.innerWidth, window.innerHeight) * randomBetween(0.38, 0.68);
+  const flybySpeed = randomBetween(34, 58);
+  if (!sceneDirector.reserve("planetary flyby", flybySpeed * 1000, force)) return false;
   const typeRoll = Math.random();
   const type = typeRoll < 0.34 ? "ocean" : typeRoll < 0.62 ? "gas" : "rocky";
   const hue = type === "ocean"
@@ -960,7 +1138,7 @@ function launchPlanetFlyby() {
   flyby.style.setProperty("--flyby-atmosphere-hue", `${type === "ocean" ? randomBetween(188, 210) : type === "gas" ? hue + 8 : randomBetween(18, 205)}`);
   flyby.style.setProperty("--flyby-weather-speed", `${randomBetween(28, 52)}s`);
   flyby.style.setProperty("--flyby-tilt", `${randomBetween(-12, 12)}deg`);
-  flyby.style.setProperty("--flyby-speed", `${randomBetween(34, 58)}s`);
+  flyby.style.setProperty("--flyby-speed", `${flybySpeed}s`);
   const surface = document.createElement("span");
   const terrain = document.createElement("i");
   const weather = document.createElement("i");
@@ -996,13 +1174,16 @@ function launchPlanetFlyby() {
   flyby.addEventListener("animationend", () => flyby.remove(), { once: true });
   field.append(flyby);
   showHudEvent("PROXIMITY // LARGE BODY", "Planetary flyby", "Parallax compensation active");
+  return true;
 }
 
-function schedulePlanetFlyby(initial = false) {
-  const wait = initial ? randomBetween(50000, 100000) : randomBetween(150000, 290000);
+function schedulePlanetFlyby(initial = false, retry = false) {
+  const wait = retry
+    ? randomBetween(30000, 60000)
+    : initial ? randomBetween(50000, 100000) : randomBetween(150000, 290000);
   window.setTimeout(() => {
-    launchPlanetFlyby();
-    schedulePlanetFlyby();
+    const launched = launchPlanetFlyby();
+    schedulePlanetFlyby(false, !launched);
   }, wait);
 }
 
@@ -1017,9 +1198,11 @@ pulsar.style.setProperty("--pulsar-speed", `${pulsarSpeed}s`);
 pulsar.style.setProperty("--pulsar-delay", `${-randomBetween(0, pulsarSpeed)}s`);
 pulsar.innerHTML = '<span class="pulsar__beam"></span><span class="pulsar__core"></span>';
 document.querySelector(".pulsar-field").append(pulsar);
+detailAnimationObserver?.observe(pulsar);
+window.requestAnimationFrame(updateRocketLighting);
 
 function launchComet() {
-  if (document.hidden || reducedMotion.matches) return;
+  if (document.hidden || reducedMotion.matches || !sceneDirector.allowsMinorEvent()) return;
 
   const plane = chooseMotionPlane();
   const field = document.querySelector(`.comet-field--${plane.name}`);
@@ -1062,7 +1245,7 @@ window.setTimeout(() => {
 }, randomBetween(3000, 8000));
 
 function launchMeteor() {
-  if (document.hidden || reducedMotion.matches) return;
+  if (document.hidden || reducedMotion.matches || !sceneDirector.allowsMinorEvent()) return;
 
   const plane = chooseMotionPlane();
   const field = document.querySelector(`.meteor-field--${plane.name}`);
@@ -1118,3 +1301,78 @@ window.setTimeout(() => {
   launchMeteor();
   scheduleMeteor();
 }, randomBetween(10000, 22000));
+
+function installDebugPanel() {
+  if (!new URLSearchParams(window.location.search).has("debug")) return;
+
+  const panel = document.createElement("aside");
+  const heading = document.createElement("strong");
+  const status = document.createElement("output");
+  const controls = [
+    ["Far system", "far"],
+    ["Mid system", "middle"],
+    ["Near system", "near"],
+    ["Planet flyby", "flyby"],
+    ["Black hole", "black-hole"],
+    ["Pulsar", "pulsar"],
+    ["Toggle nebula", "nebula"],
+    ["Next region", "region"],
+    ["Warp", "warp"],
+  ];
+
+  const previewPlanet = (depth) => {
+    const planet = document.querySelector(`.planet-field--${depth} .planet`);
+    if (!planet) return;
+    randomizePlanet(planet, depth);
+    planet.classList.remove("planet--absent");
+    planet.classList.add("planet--debug-preview");
+    window.setTimeout(() => {
+      planet.classList.add("planet--absent");
+      planet.classList.remove("planet--debug-preview");
+    }, 14000);
+  };
+
+  const previewRareBody = (selector, className) => {
+    const body = document.querySelector(selector);
+    if (!body) return;
+    body.classList.remove("rare-body--suppressed");
+    body.classList.add(className);
+    window.setTimeout(() => body.classList.remove(className), 14000);
+  };
+
+  panel.className = "debug-panel";
+  heading.textContent = "SCENE LAB";
+  status.className = "debug-panel__status";
+  panel.append(heading, status);
+
+  controls.forEach(([label, action]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.addEventListener("click", () => {
+      if (["far", "middle", "near"].includes(action)) previewPlanet(action);
+      if (action === "flyby") launchPlanetFlyby(true);
+      if (action === "black-hole") previewRareBody(".black-hole", "black-hole--debug-preview");
+      if (action === "pulsar") previewRareBody(".pulsar", "pulsar--debug-preview");
+      if (action === "nebula") scene.classList.toggle("scene--nebula-visible");
+      if (action === "warp") launchWarp(true);
+      if (action === "region") {
+        const currentIndex = environmentRegions.findIndex(({ name }) => name === currentEnvironmentRegion);
+        applyEnvironmentRegion(environmentRegions[(currentIndex + 1) % environmentRegions.length]);
+      }
+    });
+    panel.append(button);
+  });
+
+  document.body.append(panel);
+  const updateDebugStatus = () => {
+    const active = performance.now() < sceneDirector.activeUntil
+      ? sceneDirector.activeEvent
+      : `quiet ${Math.max(0, Math.ceil((sceneDirector.quietUntil - performance.now()) / 1000))}s`;
+    status.textContent = `${currentEnvironmentRegion} // ${active}`;
+  };
+  updateDebugStatus();
+  window.setInterval(updateDebugStatus, 500);
+}
+
+installDebugPanel();
