@@ -69,42 +69,181 @@ populateStars(document.querySelector(".stars--far"), 170, "far");
 populateStars(document.querySelector(".stars--near"), 72, "near");
 populateStars(document.querySelector(".stars--bright"), 24, "bright");
 
-function populateNebulae(field, count) {
+const nebulaSeed = Math.floor(Math.random() * 0x7fffffff);
+const nebulaPalettes = [
+  [[8, 19, 44], [24, 126, 164], [154, 57, 166], [246, 174, 84]],
+  [[25, 12, 48], [111, 51, 158], [57, 194, 211], [239, 113, 91]],
+  [[13, 27, 43], [41, 137, 125], [183, 57, 108], [247, 196, 105]],
+];
+const nebulaPalette = nebulaPalettes[Math.floor(Math.random() * nebulaPalettes.length)];
+
+function seededRandom(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state += 0x6d2b79f5;
+    let value = state;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function createNoiseStack(seed, octaveCount = 5) {
+  const random = seededRandom(seed);
+  return Array.from({ length: octaveCount }, (_, octave) => {
+    const frequency = 2 ** (octave + 1);
+    return {
+      frequency,
+      values: Float32Array.from({ length: frequency * frequency }, random),
+    };
+  });
+}
+
+function sampleFractalNoise(stack, x, y) {
+  let amplitude = 1;
+  let amplitudeTotal = 0;
+  let total = 0;
+
+  stack.forEach(({ frequency, values }) => {
+    const wrappedX = ((x % 1) + 1) % 1 * frequency;
+    const wrappedY = ((y % 1) + 1) % 1 * frequency;
+    const x0 = Math.floor(wrappedX) % frequency;
+    const y0 = Math.floor(wrappedY) % frequency;
+    const x1 = (x0 + 1) % frequency;
+    const y1 = (y0 + 1) % frequency;
+    const txRaw = wrappedX - Math.floor(wrappedX);
+    const tyRaw = wrappedY - Math.floor(wrappedY);
+    const tx = txRaw * txRaw * (3 - 2 * txRaw);
+    const ty = tyRaw * tyRaw * (3 - 2 * tyRaw);
+    const top = values[y0 * frequency + x0] * (1 - tx) + values[y0 * frequency + x1] * tx;
+    const bottom = values[y1 * frequency + x0] * (1 - tx) + values[y1 * frequency + x1] * tx;
+
+    total += (top * (1 - ty) + bottom * ty) * amplitude;
+    amplitudeTotal += amplitude;
+    amplitude *= 0.52;
+  });
+
+  return total / amplitudeTotal;
+}
+
+const clamp01 = (value) => Math.max(0, Math.min(1, value));
+const smoothstep = (minimum, maximum, value) => {
+  const amount = clamp01((value - minimum) / (maximum - minimum));
+  return amount * amount * (3 - 2 * amount);
+};
+
+function renderProceduralNebula() {
+  const canvas = document.createElement("canvas");
+  const width = 420;
+  const height = Math.round(Math.max(260, Math.min(560, width * window.innerHeight / window.innerWidth)));
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  const image = context.createImageData(width, height);
+  const baseNoise = createNoiseStack(nebulaSeed + 11, 6);
+  const warpXNoise = createNoiseStack(nebulaSeed + 37, 4);
+  const warpYNoise = createNoiseStack(nebulaSeed + 71, 4);
+  const ridgeNoise = createNoiseStack(nebulaSeed + 103, 6);
+  const dustNoise = createNoiseStack(nebulaSeed + 149, 4);
+  const chemistryNoise = createNoiseStack(nebulaSeed + 181, 4);
+  const fineNoise = createNoiseStack(nebulaSeed + 223, 6);
+  const cavities = Array.from({ length: 3 }, (_, index) => {
+    const random = seededRandom(nebulaSeed + 211 + index * 17);
+    return { x: random(), y: random(), radius: 0.08 + random() * 0.09 };
+  });
+
+  for (let pixelY = 0; pixelY < height; pixelY += 1) {
+    for (let pixelX = 0; pixelX < width; pixelX += 1) {
+      const u = pixelX / width;
+      const v = pixelY / height;
+      const warpX = sampleFractalNoise(warpXNoise, u, v) - 0.5;
+      const warpY = sampleFractalNoise(warpYNoise, u + 0.31, v + 0.17) - 0.5;
+      const warpedU = u + warpX * 0.2;
+      const warpedV = v + warpY * 0.2;
+      const base = sampleFractalNoise(baseNoise, warpedU, warpedV);
+      const ridgeSample = sampleFractalNoise(ridgeNoise, warpedU * 1.06 + 0.13, warpedV * 1.06 - 0.09);
+      const filaments = (1 - Math.abs(ridgeSample * 2 - 1)) ** 2.4;
+      const fineSample = sampleFractalNoise(fineNoise, warpedU * 1.9 - 0.16, warpedV * 1.9 + 0.22);
+      const fineFilaments = (1 - Math.abs(fineSample * 2 - 1)) ** 4.6;
+      const dust = sampleFractalNoise(dustNoise, warpedU - 0.21, warpedV + 0.28);
+      const chemistry = sampleFractalNoise(chemistryNoise, warpedU + 0.37, warpedV - 0.24);
+      let density = smoothstep(0.45, 0.76, base * 0.55 + filaments * 0.31 + fineFilaments * 0.14);
+
+      cavities.forEach((cavity) => {
+        const deltaX = Math.min(Math.abs(u - cavity.x), 1 - Math.abs(u - cavity.x));
+        const deltaY = Math.min(Math.abs(v - cavity.y), 1 - Math.abs(v - cavity.y));
+        const distance = Math.hypot(deltaX, deltaY);
+        const hollow = Math.exp(-(distance ** 2) / (cavity.radius ** 2));
+        const rim = Math.exp(-((distance - cavity.radius) ** 2) / 0.0007);
+        density = Math.max(0, density - hollow * 0.5) + rim * 0.12;
+      });
+
+      const transmission = Math.exp(-dust * 2.5);
+      const emission = clamp01(
+        density * (0.5 + filaments * 0.74 + fineFilaments * 0.36) * (0.52 + transmission * 0.48),
+      );
+      const chemicalMix = smoothstep(0.26, 0.74, chemistry);
+      const thermalMix = smoothstep(0.34, 0.78, filaments * 0.48 + fineFilaments * 0.28 + density * 0.24);
+      const colorSeparation = smoothstep(0.29, 0.7, chemistry * 0.5 + filaments * 0.32 + fineFilaments * 0.18);
+      const pixelIndex = (pixelY * width + pixelX) * 4;
+      const grain = ((pixelX * 17 + pixelY * 31 + nebulaSeed) & 7) - 3;
+
+      for (let channelIndex = 0; channelIndex < 3; channelIndex += 1) {
+        const coolChannel = nebulaPalette[0][channelIndex] * (1 - chemicalMix) + nebulaPalette[1][channelIndex] * chemicalMix;
+        const hotChannel = nebulaPalette[2][channelIndex] * (1 - thermalMix) + nebulaPalette[3][channelIndex] * thermalMix;
+        const gasColor = coolChannel * (1 - colorSeparation) + hotChannel * colorSeparation;
+        image.data[pixelIndex + channelIndex] = gasColor + grain;
+      }
+      image.data[pixelIndex + 3] = clamp01(emission * 0.72) * 255;
+    }
+  }
+
+  context.putImageData(image, 0, 0);
+  return `url("${canvas.toDataURL("image/png")}")`;
+}
+
+const nebulaDepthFields = document.querySelectorAll(".nebula-field, .nebula-depth-field");
+
+function updateNebulaTexture() {
+  const texture = renderProceduralNebula();
+  nebulaDepthFields.forEach((field) => {
+    field.style.backgroundImage = texture;
+  });
+}
+
+updateNebulaTexture();
+
+function populateNebulaLights(field, count) {
   const fragment = document.createDocumentFragment();
+  const random = seededRandom(nebulaSeed + 307);
 
   for (let index = 0; index < count; index += 1) {
-    const x = randomBetween(-12, 72);
-    const y = randomBetween(0, 200);
-    const width = randomBetween(36, 68);
-    const height = randomBetween(22, 42);
-    const hue = Math.random() < 0.5 ? randomBetween(188, 228) : randomBetween(274, 326);
-    const isLuminous = index === 0 || Math.random() < 0.35;
-    const opacity = isLuminous ? randomBetween(0.22, 0.34) : randomBetween(0.12, 0.19);
-    const saturation = isLuminous ? randomBetween(72, 88) : randomBetween(48, 62);
-    const lightness = isLuminous ? randomBetween(60, 70) : randomBetween(48, 58);
-    const rotation = randomBetween(-24, 24);
+    const x = random() * 94 + 3;
+    const y = random() * 100;
+    const color = random() < 0.5 ? nebulaPalette[1] : nebulaPalette[3];
+    const size = 0.8 + random() * 1.2;
 
-    // Duplicate at exactly one field-length so the extremely slow drift remains seamless.
-    for (const yOffset of [0, 200]) {
-      const nebula = document.createElement("span");
-      nebula.className = "nebula";
-      nebula.style.setProperty("--nebula-x", `${x}vw`);
-      nebula.style.setProperty("--nebula-y", `${y + yOffset}vh`);
-      nebula.style.setProperty("--nebula-width", `${width}vw`);
-      nebula.style.setProperty("--nebula-height", `${height}vh`);
-      nebula.style.setProperty("--nebula-hue", hue);
-      nebula.style.setProperty("--nebula-opacity", opacity);
-      nebula.style.setProperty("--nebula-saturation", `${saturation}%`);
-      nebula.style.setProperty("--nebula-lightness", `${lightness}%`);
-      nebula.style.setProperty("--nebula-rotation", `${rotation}deg`);
-      fragment.append(nebula);
+    for (const yOffset of [0, 100]) {
+      const light = document.createElement("span");
+      light.className = "nebula-light";
+      light.style.setProperty("--nebula-light-x", `${x}vw`);
+      light.style.setProperty("--nebula-light-y", `${y + yOffset}vh`);
+      light.style.setProperty("--nebula-light-size", `${size}px`);
+      light.style.setProperty("--nebula-light-color", color.join(" "));
+      fragment.append(light);
     }
   }
 
   field.append(fragment);
 }
 
-populateNebulae(document.querySelector(".nebula-field"), 2);
+populateNebulaLights(document.querySelector(".nebula-knot-field"), 5);
+
+let nebulaResizeTimer;
+window.addEventListener("resize", () => {
+  window.clearTimeout(nebulaResizeTimer);
+  nebulaResizeTimer = window.setTimeout(updateNebulaTexture, 240);
+});
 
 function populateGalaxies(field, count) {
   const fragment = document.createDocumentFragment();
@@ -133,7 +272,92 @@ function populateGalaxies(field, count) {
   field.append(fragment);
 }
 
-populateGalaxies(document.querySelector(".galaxy-field"), 4);
+populateGalaxies(document.querySelector(".galaxy-field"), 1);
+
+const constellationShapes = [
+  [[8, 70], [27, 42], [46, 55], [61, 22], [78, 39], [94, 12]],
+  [[9, 24], [31, 18], [43, 48], [66, 54], [88, 31], [72, 82], [42, 72]],
+  [[12, 78], [28, 36], [50, 16], [72, 37], [87, 78], [50, 62], [12, 78]],
+];
+
+function populateConstellations(field, count) {
+  const namespace = "http://www.w3.org/2000/svg";
+  const fragment = document.createDocumentFragment();
+
+  for (let index = 0; index < count; index += 1) {
+    const points = constellationShapes[index % constellationShapes.length];
+    const x = randomBetween(8, 80);
+    const y = randomBetween(0, 100);
+    const width = randomBetween(110, 210);
+    const tilt = randomBetween(-18, 18);
+
+    for (const yOffset of [0, 100]) {
+      const constellation = document.createElementNS(namespace, "svg");
+      constellation.classList.add("constellation");
+      constellation.setAttribute("viewBox", "0 0 100 100");
+      constellation.style.setProperty("--constellation-x", `${x}vw`);
+      constellation.style.setProperty("--constellation-y", `${y + yOffset}vh`);
+      constellation.style.setProperty("--constellation-width", `${width}px`);
+      constellation.style.setProperty("--constellation-tilt", `${tilt}deg`);
+
+      const line = document.createElementNS(namespace, "polyline");
+      line.setAttribute("points", points.map(([pointX, pointY]) => `${pointX},${pointY}`).join(" "));
+      constellation.append(line);
+
+      points.forEach(([pointX, pointY], pointIndex) => {
+        const star = document.createElementNS(namespace, "circle");
+        star.setAttribute("cx", pointX);
+        star.setAttribute("cy", pointY);
+        star.setAttribute("r", pointIndex % 3 === 0 ? "1.8" : "1.2");
+        constellation.append(star);
+      });
+      fragment.append(constellation);
+    }
+  }
+
+  field.append(fragment);
+}
+
+function populateCosmicDust(field, count) {
+  const fragment = document.createDocumentFragment();
+
+  for (let index = 0; index < count; index += 1) {
+    const dust = document.createElement("span");
+    const depth = randomBetween(0.18, 1);
+    dust.className = "cosmic-dust";
+    dust.style.setProperty("--dust-x", `${randomBetween(2, 98)}vw`);
+    dust.style.setProperty("--dust-size", `${0.5 + depth * 2.2}px`);
+    dust.style.setProperty("--dust-drift", `${randomBetween(-12, 12) * depth}vw`);
+    dust.style.setProperty("--dust-speed", `${16 - depth * 10}s`);
+    dust.style.setProperty("--dust-delay", `${-randomBetween(0, 16)}s`);
+    dust.style.setProperty("--dust-opacity", `${0.08 + depth * 0.34}`);
+    fragment.append(dust);
+  }
+
+  field.append(fragment);
+}
+
+populateConstellations(document.querySelector(".constellation-field"), 3);
+populateCosmicDust(document.querySelector(".cosmic-dust-field"), 46);
+
+function populateWarpStreaks(field, count) {
+  const fragment = document.createDocumentFragment();
+
+  for (let index = 0; index < count; index += 1) {
+    const streak = document.createElement("span");
+    streak.className = "warp-streak";
+    streak.style.setProperty("--warp-angle", `${randomBetween(0, 360)}deg`);
+    streak.style.setProperty("--warp-length", `${randomBetween(34, 120)}px`);
+    streak.style.setProperty("--warp-size", `${randomBetween(0.6, 2.2)}px`);
+    streak.style.setProperty("--warp-delay", `${-randomBetween(0, 0.9)}s`);
+    streak.style.setProperty("--warp-hue", `${randomBetween(188, 224)}`);
+    fragment.append(streak);
+  }
+
+  field.append(fragment);
+}
+
+populateWarpStreaks(document.querySelector(".warp-overlay"), 68);
 
 const stellarTypes = [
   { hue: 8, saturation: 72, lightness: 62, luminosity: 0.08, radius: 0.72, weight: 0.28 },
@@ -197,10 +421,20 @@ function stylePlanetBody(body, size, orbitalDistance, stellarType, starX, starY)
 
   const ringChance = type === "gas" ? 0.22 : 0.025;
   const atmosphereChance = type === "ice" ? 0.48 : type === "gas" ? 0.38 : 0.2;
+  const isOcean = type === "rocky" && Math.random() < 0.24;
+  const isCloudy = Math.random() < (type === "gas" ? 0.7 : isOcean ? 0.72 : 0.24);
   body.classList.toggle("planet--ringed", Math.random() < ringChance);
   body.classList.toggle("planet--atmosphere", Math.random() < atmosphereChance);
+  body.classList.toggle("planet--ocean", isOcean);
+  body.classList.toggle("planet--cloudy", isCloudy);
+  body.classList.toggle("planet--stormy", isCloudy && Math.random() < 0.32);
+  body.classList.toggle("planet--inhabited", (isOcean || type === "rocky") && Math.random() < 0.1);
   body.style.setProperty("--atmosphere-hue", `${type === "ice" ? hue : hue + randomBetween(12, 42)}`);
   body.style.setProperty("--atmosphere-opacity", `${randomBetween(0.28, 0.58)}`);
+  body.style.setProperty("--weather-speed", `${randomBetween(18, 42)}s`);
+  body.style.setProperty("--weather-delay", `${-randomBetween(0, 40)}s`);
+  body.style.setProperty("--city-x", `${randomBetween(28, 72)}%`);
+  body.style.setProperty("--city-y", `${randomBetween(38, 78)}%`);
 }
 
 function appendPlanetParts(body) {
@@ -208,6 +442,11 @@ function appendPlanetParts(body) {
   ringBack.className = "planet__ring planet__ring--back";
   const surface = document.createElement("span");
   surface.className = "planet__surface";
+  const weather = document.createElement("span");
+  weather.className = "planet__weather";
+  const lights = document.createElement("span");
+  lights.className = "planet__lights";
+  surface.append(weather, lights);
   const ringFront = document.createElement("span");
   ringFront.className = "planet__ring planet__ring--front";
   body.append(ringBack, surface, ringFront);
@@ -219,18 +458,32 @@ function appendMoons(body, planetSize, stellarType) {
   const moonCount = Math.random() < 0.2 ? 2 : 1;
   for (let index = 0; index < moonCount; index += 1) {
     const moon = document.createElement("span");
-    const angle = randomBetween(0, Math.PI * 2);
     const distance = planetSize * randomBetween(0.78 + index * 0.32, 1.12 + index * 0.42);
+    const verticalDistance = distance * randomBetween(0.38, 0.52);
     const moonSize = planetSize * randomBetween(0.08, 0.18);
 
     moon.className = "planet__moon";
-    moon.style.setProperty("--moon-x", `${Math.cos(angle) * distance}px`);
-    moon.style.setProperty("--moon-y", `${Math.sin(angle) * distance * 0.48}px`);
+    moon.style.setProperty("--moon-x", `${distance}px`);
+    moon.style.setProperty("--moon-y", `${verticalDistance}px`);
+    moon.style.setProperty("--moon-x-diagonal", `${distance * Math.SQRT1_2}px`);
+    moon.style.setProperty("--moon-y-diagonal", `${verticalDistance * Math.SQRT1_2}px`);
     moon.style.setProperty("--moon-size", `${Math.max(2, moonSize)}px`);
     moon.style.setProperty("--moon-hue", `${stellarType.hue + randomBetween(-28, 18)}`);
     moon.style.setProperty("--moon-lightness", `${randomBetween(48, 72)}%`);
-    moon.style.zIndex = Math.sin(angle) > 0 ? 4 : "0";
+    const moonSpeed = randomBetween(58, 110);
+    moon.style.setProperty("--moon-speed", `${moonSpeed}s`);
+    moon.style.setProperty("--moon-delay", `${-randomBetween(0, moonSpeed)}s`);
     body.append(moon);
+  }
+
+  if (Math.random() < 0.42) {
+    const eclipse = document.createElement("span");
+    eclipse.className = "planet__eclipse";
+    eclipse.style.setProperty("--eclipse-size", `${randomBetween(18, 38)}%`);
+    eclipse.style.setProperty("--eclipse-y", `${randomBetween(18, 68)}%`);
+    eclipse.style.setProperty("--eclipse-speed", `${randomBetween(9, 18)}s`);
+    eclipse.style.setProperty("--eclipse-delay", `${-randomBetween(0, 18)}s`);
+    body.querySelector(":scope > .planet__surface").append(eclipse);
   }
 }
 
@@ -293,7 +546,7 @@ function randomizePlanet(system, depth, initial = false) {
   const sunSize = baseSize * (0.9 + stellarType.radius * 0.35);
 
   system.querySelectorAll(
-    ".planet__companion, .asteroid-belt, .planet__moon, .planet__sun--secondary",
+    ".planet__companion, .asteroid-belt, .planet__moon, .planet__eclipse, .planet__sun--secondary",
   ).forEach((item) => item.remove());
   system.style.setProperty("--planet-x", `${randomBetween(10, 90)}vw`);
   system.style.setProperty("--sun-x", `${sunX}px`);
@@ -302,6 +555,7 @@ function randomizePlanet(system, depth, initial = false) {
   system.style.setProperty("--sun-hue", stellarType.hue);
   system.style.setProperty("--sun-saturation", `${stellarType.saturation}%`);
   system.style.setProperty("--sun-lightness", `${Math.max(72, stellarType.lightness)}%`);
+  system.querySelector(":scope > .planet__sun").classList.toggle("sun--flaring", Math.random() < 0.28);
   stylePlanetBody(
     system,
     baseSize * randomBetween(0.68, 1),
@@ -323,8 +577,10 @@ function randomizePlanet(system, depth, initial = false) {
     companionStar.style.setProperty("--sun2-y", `${sunY + Math.sin(binaryAngle) * binarySeparation}px`);
     companionStar.style.setProperty("--sun2-size", `${sunSize * randomBetween(0.42, 0.72)}px`);
     companionStar.style.setProperty("--sun2-hue", companionType.hue);
+    companionStar.style.setProperty("--sun-hue", companionType.hue);
     companionStar.style.setProperty("--sun2-saturation", `${companionType.saturation}%`);
     companionStar.style.setProperty("--sun2-lightness", `${Math.max(74, companionType.lightness)}%`);
+    companionStar.classList.toggle("sun--flaring", Math.random() < 0.34);
     system.prepend(companionStar);
   }
 
@@ -380,7 +636,11 @@ document.querySelectorAll(".planet-field").forEach((field) => {
     appendPlanetParts(planet);
 
     randomizePlanet(planet, depth, true);
-    planet.addEventListener("animationiteration", () => randomizePlanet(planet, depth));
+    planet.addEventListener("animationiteration", (event) => {
+      if (event.target === planet && event.animationName === "planet-fall") {
+        randomizePlanet(planet, depth);
+      }
+    });
     field.append(planet);
   }
 });
@@ -470,6 +730,16 @@ function updateRocketLighting(timestamp) {
     const lightX = 50 + (frontVectorX / frontVectorLength) * 44;
     const lightY = 50 + (frontVectorY / frontVectorLength) * 44;
     const intensity = Math.min(0.34, frontInfluence);
+    const pulsarRect = pulsar.getBoundingClientRect();
+    const pulsarX = pulsarRect.left + pulsarRect.width * 0.5;
+    const pulsarY = pulsarRect.top + pulsarRect.height * 0.5;
+    const pulsarDirection = Math.atan2(rocketY - pulsarY, rocketX - pulsarX);
+    const beamAngle = ((timestamp % 48000) / 48000) * Math.PI * 2;
+    const beamAlignment = Math.abs(Math.cos(pulsarDirection - beamAngle)) ** 8;
+    const pulsarOpacity = Number.parseFloat(getComputedStyle(pulsar).opacity);
+    const pulsarDistance = Math.hypot(rocketX - pulsarX, rocketY - pulsarY);
+    const pulsarProximity = Math.max(0, 1 - pulsarDistance / (influenceRadius * 1.25));
+    const pulsarFlash = Math.min(0.32, beamAlignment * pulsarOpacity * (0.12 + pulsarProximity * 0.3));
 
     rocket.style.setProperty("--stellar-rim-x", `${rimX}%`);
     rocket.style.setProperty("--stellar-rim-y", `${rimY}%`);
@@ -480,12 +750,41 @@ function updateRocketLighting(timestamp) {
     rocket.style.setProperty("--stellar-light-hue", `${frontHue}`);
     rocket.style.setProperty("--stellar-light-intensity", `${intensity}`);
     rocket.style.setProperty("--stellar-light-soft-intensity", `${intensity * 0.3}`);
+    rocket.style.setProperty("--pulsar-light-intensity", `${pulsarFlash}`);
   }
 
   window.requestAnimationFrame(updateRocketLighting);
 }
 
 window.requestAnimationFrame(updateRocketLighting);
+
+const scene = document.querySelector(".scene");
+
+function scheduleNebulaEncounter(visible, initial = false) {
+  scene.classList.toggle("scene--nebula-visible", visible);
+  const duration = visible
+    ? randomBetween(55000, 105000)
+    : initial
+      ? randomBetween(18000, 60000)
+      : randomBetween(100000, 220000);
+
+  window.setTimeout(() => scheduleNebulaEncounter(!visible), duration);
+}
+
+scheduleNebulaEncounter(Math.random() < 0.33, true);
+
+function scheduleWarp(initial = false) {
+  const wait = initial ? randomBetween(70000, 120000) : randomBetween(140000, 250000);
+  window.setTimeout(() => {
+    if (!document.hidden && !reducedMotion.matches) {
+      scene.classList.add("scene--warp");
+      window.setTimeout(() => scene.classList.remove("scene--warp"), 6500);
+    }
+    scheduleWarp();
+  }, wait);
+}
+
+scheduleWarp(true);
 
 document.querySelectorAll(".black-hole-field").forEach((field) => {
   const count = Number(field.dataset.blackHoles);
@@ -505,6 +804,16 @@ document.querySelectorAll(".black-hole-field").forEach((field) => {
     field.append(blackHole);
   }
 });
+
+const pulsar = document.createElement("span");
+const pulsarSpeed = randomBetween(480, 720);
+pulsar.className = "pulsar";
+pulsar.style.setProperty("--pulsar-x", `${randomBetween(12, 88)}vw`);
+pulsar.style.setProperty("--pulsar-size", `${randomBetween(10, 18)}px`);
+pulsar.style.setProperty("--pulsar-speed", `${pulsarSpeed}s`);
+pulsar.style.setProperty("--pulsar-delay", `${-randomBetween(0, pulsarSpeed)}s`);
+pulsar.innerHTML = '<span class="pulsar__beam"></span><span class="pulsar__core"></span>';
+document.querySelector(".pulsar-field").append(pulsar);
 
 function launchComet() {
   if (document.hidden || reducedMotion.matches) return;

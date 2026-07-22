@@ -5,13 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#0b1430" />
     <title>Upward — CSS HD-2D Rocket</title>
-    <link rel="stylesheet" href="styles.css?v=11" />
-    <script src="script.js?v=10" defer></script>
+    <link rel="stylesheet" href="styles.css?v=23" />
+    <script src="script.js?v=25" defer></script>
   </head>
   <body>
     <main class="scene" aria-label="A pixel-art rocket flying continuously upward">
       <div class="nebula-field" aria-hidden="true"></div>
+      <div class="nebula-depth-field nebula-depth-field--middle" aria-hidden="true"></div>
+      <div class="nebula-depth-field nebula-depth-field--near" aria-hidden="true"></div>
+      <div class="nebula-knot-field" aria-hidden="true"></div>
       <div class="galaxy-field" aria-hidden="true"></div>
+      <div class="constellation-field" aria-hidden="true"></div>
       <div class="stars stars--far" aria-hidden="true"></div>
       <div class="stars stars--near" aria-hidden="true"></div>
       <div class="stars stars--bright" aria-hidden="true"></div>
@@ -19,12 +23,14 @@
       <div class="planet-field planet-field--far" data-planets="1" aria-hidden="true"></div>
       <div class="planet-field planet-field--near" data-planets="1" aria-hidden="true"></div>
       <div class="black-hole-field" data-black-holes="1" aria-hidden="true"></div>
+      <div class="pulsar-field" aria-hidden="true"></div>
       <div class="comet-field comet-field--far motion-field motion-field--far" aria-hidden="true"></div>
       <div class="meteor-field meteor-field--far motion-field motion-field--far" aria-hidden="true"></div>
       <div class="comet-field comet-field--middle motion-field motion-field--middle" aria-hidden="true"></div>
       <div class="meteor-field meteor-field--middle motion-field motion-field--middle" aria-hidden="true"></div>
       <div class="comet-field comet-field--near motion-field motion-field--near" aria-hidden="true"></div>
       <div class="meteor-field meteor-field--near motion-field motion-field--near" aria-hidden="true"></div>
+      <div class="cosmic-dust-field" aria-hidden="true"></div>
 
       <div class="rocket-wrap" aria-hidden="true">
         <div class="rocket-shadow"></div>
@@ -35,9 +41,15 @@
             <div class="stellar-sheen"></div>
             <div class="window"><span></span></div>
             <div class="panel-lines"></div>
+            <div class="telemetry-lights"><i></i><i></i><i></i></div>
           </div>
           <div class="fin fin--left"></div>
           <div class="fin fin--right"></div>
+          <div class="nav-light nav-light--port"></div>
+          <div class="nav-light nav-light--starboard"></div>
+          <div class="nav-light nav-light--strobe"></div>
+          <div class="rcs-port rcs-port--left"></div>
+          <div class="rcs-port rcs-port--right"></div>
           <div class="engine"></div>
           <div class="flame flame--outer"></div>
           <div class="flame flame--middle"></div>
@@ -47,6 +59,7 @@
       </div>
 
       <div class="vignette" aria-hidden="true"></div>
+      <div class="warp-overlay" aria-hidden="true"></div>
 
       <header class="title-card">
         <p class="eyebrow">Flight log // 001</p>
